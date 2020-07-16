@@ -13,6 +13,7 @@ import dns.message
 import priority
 import struct
 import urllib.parse
+import h2.events
 
 from dohproxy import constants, utils
 
@@ -54,6 +55,10 @@ class StubServerProtocol:
             functional_timeout=0.1,
             ssl=sslctx,
             server_hostname=self.args.domain)
+        if hasattr(h2.events, "PingReceived"):
+            # Need the hasattr here because some older versions of h2 may not
+            # have the PingReceived event
+            client._event_handlers[h2.events.PingReceived] = lambda _: None
         rtt = await client.wait_functional()
         if rtt:
             self.logger.debug('Round-trip time: %.1fms' % (rtt * 1000))
