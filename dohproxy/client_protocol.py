@@ -20,12 +20,8 @@ from bidict import bidict
 from dohproxy import constants, utils
 
 DOHSERVERS = bidict({'dns.google': 'Google',
-              'cloudflare-dns.com': 'CF',
-              'dns.quad9.net': 'Quad9'})
-
-# DOHDOMAINS = {'Google': 'dns.google',
-#               'CF': 'cloudflare-dns.com',
-#               'Quad9': 'dns.quad9.net'}
+                     'cloudflare-dns.com': 'CF',
+                     'dns.quad9.net': 'Quad9'})
 
 
 class StubServerProtocol:
@@ -77,7 +73,7 @@ class StubServerProtocol:
         return client
 
     async def get_ddns_client(self, force_new=False):
-        #if 'client' in self.client_store:
+        # if 'client' in self.client_store:
         #    self.client_store.pop('client')
         domain_list = self.args.domain.split(',')
         for domain in domain_list:
@@ -88,7 +84,7 @@ class StubServerProtocol:
         if force_new:
             for domain in domain_list:
                 self.client_store[DOHSERVERS[domain]] = None
-        #self.logger.debug('DOMAINLIST',domain_list)
+        # self.logger.debug('DOMAINLIST',domain_list)
         # Check if ALL domains have an open connection
         for domain in domain_list:
             if DOHSERVERS[domain] not in self.client_store:
@@ -97,7 +93,7 @@ class StubServerProtocol:
                 if self.client_store[DOHSERVERS[domain]]._conn is not None:
                     if domain == domain_list[-1]:
                         return self.client_store
-                
+
             # Open client connection
             self.logger.debug('Opening connection to {}'.format(domain))
             sslctx = utils.create_custom_ssl_context(
@@ -121,9 +117,8 @@ class StubServerProtocol:
                 self.logger.debug('Round-trip time: %.1fms' % (rtt * 1000))
 
             self.client_store[DOHSERVERS[domain]] = client
-            #if domain == domain_list[-1]:
+            # if domain == domain_list[-1]:
         return self.client_store
-                    
 
     def connection_made(self, transport):
         pass
@@ -161,13 +156,14 @@ class StubServerProtocol:
 
     def choose_resolver(self):
         res = random.choice(list(self.client_store))
-        self.logger.info('CHOSE {} from {}'.format(res, self.client_store.keys()))
+        self.logger.info('CHOSE {} from {}'.format(
+            res, self.client_store.keys()))
         return [self.client_store[res], DOHSERVERS.inverse[res]]
 
     async def make_request(self, addr, dnsq):
         # FIXME: maybe aioh2 should allow registering to connection_lost event
         # so we can find out when the connection get disconnected.
-        
+
         if not self.args.ddns:
             with await self._lock:
                 client = await self.get_client()
@@ -183,7 +179,7 @@ class StubServerProtocol:
         body = b''
 
         headers = [
-            (':authority',resolver_domain),
+            (':authority', resolver_domain),
             (':method', self.args.post and 'POST' or 'GET'),
             (':scheme', 'https'),
         ]
@@ -205,7 +201,7 @@ class StubServerProtocol:
             if not self.args.ddns:
                 client = await self.get_client(force_new=True)
             else:
-                client,_ = await self.get_ddns_client(force_new=True)
+                client, _ = await self.get_ddns_client(force_new=True)
             stream_id = await self.on_start_request(client, headers, not body)
         self.logger.debug(
             'Stream ID: {} / Total streams: {}'.format(
