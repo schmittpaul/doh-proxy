@@ -14,8 +14,18 @@ import priority
 import struct
 import urllib.parse
 import h2.events
+import random
+from bidict import bidict
 
 from dohproxy import constants, utils
+
+DOHSERVERS = bidict({'dns.google': 'Google',
+              'cloudflare-dns.com': 'CF',
+              'dns.quad9.net': 'Quad9'})
+
+# DOHDOMAINS = {'Google': 'dns.google',
+#               'CF': 'cloudflare-dns.com',
+#               'Quad9': 'dns.quad9.net'}
 
 
 class StubServerProtocol:
@@ -66,6 +76,55 @@ class StubServerProtocol:
         self.client_store['client'] = client
         return client
 
+    async def get_ddns_client(self, force_new=False):
+        #if 'client' in self.client_store:
+        #    self.client_store.pop('client')
+        domain_list = self.args.domain.split(',')
+        for domain in domain_list:
+            if domain not in DOHSERVERS:
+                DOHSERVERS[domain] = None
+                # DOHDOMAINS[domain] = None
+
+        if force_new:
+            for domain in domain_list:
+                self.client_store[DOHSERVERS[domain]] = None
+        #self.logger.debug('DOMAINLIST',domain_list)
+        # Check if ALL domains have an open connection
+        for domain in domain_list:
+            if DOHSERVERS[domain] not in self.client_store:
+                self.client_store[DOHSERVERS[domain]] = None
+            if self.client_store[DOHSERVERS[domain]] is not None:
+                if self.client_store[DOHSERVERS[domain]]._conn is not None:
+                    if domain == domain_list[-1]:
+                        return self.client_store
+                
+            # Open client connection
+            self.logger.debug('Opening connection to {}'.format(domain))
+            sslctx = utils.create_custom_ssl_context(
+                insecure=self.args.insecure,
+                cafile=self.args.cafile
+            )
+            remote_addr = self.args.remote_address \
+                if self.args.remote_address else domain
+            client = await aioh2.open_connection(
+                remote_addr,
+                self.args.port,
+                functional_timeout=0.1,
+                ssl=sslctx,
+                server_hostname=domain)
+            if hasattr(h2.events, "PingReceived"):
+                # Need the hasattr here because some older versions of h2 may not
+                # have the PingReceived event
+                client._event_handlers[h2.events.PingReceived] = lambda _: None
+            rtt = await client.wait_functional()
+            if rtt:
+                self.logger.debug('Round-trip time: %.1fms' % (rtt * 1000))
+
+            self.client_store[DOHSERVERS[domain]] = client
+            #if domain == domain_list[-1]:
+        return self.client_store
+                    
+
     def connection_made(self, transport):
         pass
 
@@ -100,12 +159,22 @@ class StubServerProtocol:
             self.logger.debug('Sending {}?{}'.format(url, params_str))
         return self.args.uri + '?' + params_str
 
-    async def make_request(self, addr, dnsq):
+    def choose_resolver(self):
+        res = random.choice(list(self.client_store))
+        self.logger.info('CHOSE {} from {}'.format(res, self.client_store.keys()))
+        return [self.client_store[res], DOHSERVERS.inverse[res]]
 
+    async def make_request(self, addr, dnsq):
         # FIXME: maybe aioh2 should allow registering to connection_lost event
         # so we can find out when the connection get disconnected.
-        with await self._lock:
-            client = await self.get_client()
+        
+        if not self.args.ddns:
+            with await self._lock:
+                client = await self.get_client()
+            resolver_domain = self.args.domain
+        else:
+            with await self._lock:
+                client, resolver_domain = self.choose_resolver()
 
         headers = {'Accept': constants.DOH_MEDIA_TYPE}
         path = self.args.uri
@@ -114,7 +183,7 @@ class StubServerProtocol:
         body = b''
 
         headers = [
-            (':authority', self.args.domain),
+            (':authority',resolver_domain),
             (':method', self.args.post and 'POST' or 'GET'),
             (':scheme', 'https'),
         ]
@@ -133,7 +202,10 @@ class StubServerProtocol:
         try:
             stream_id = await self.on_start_request(client, headers, not body)
         except priority.priority.TooManyStreamsError:
-            client = await self.get_client(force_new=True)
+            if not self.args.ddns:
+                client = await self.get_client(force_new=True)
+            else:
+                client,_ = await self.get_ddns_client(force_new=True)
             stream_id = await self.on_start_request(client, headers, not body)
         self.logger.debug(
             'Stream ID: {} / Total streams: {}'.format(

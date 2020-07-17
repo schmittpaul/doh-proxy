@@ -30,6 +30,11 @@ def parse_args():
              '"all" for all detected interfaces and addresses (netifaces '
              'required). Default: [%(default)s]'
     )
+    parser.add_argument(
+        '--ddns',
+        action='store_true',
+        help='Enables D-DNS functionality',
+    )
 
     return parser.parse_args()
 
@@ -44,6 +49,9 @@ def main():
     else:
         listen_addresses = args.listen_address
 
+    if args.ddns:
+        CLIENT_STORE.pop('client')
+
     transports = []
     for address in listen_addresses:
         logger.info("Starting UDP server: {}".format(address))
@@ -55,7 +63,10 @@ def main():
             local_addr=(address, args.listen_port))
         transport, proto = loop.run_until_complete(listen)
         transports.append(transport)
-        loop.run_until_complete(proto.get_client())
+        if args.ddns:
+            loop.run_until_complete(proto.get_ddns_client())
+        else:
+            loop.run_until_complete(proto.get_client())
 
         logger.info("Starting TCP server: {}".format(address))
         cls = client_protocol.StubServerProtocolTCP
