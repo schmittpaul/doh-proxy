@@ -7,9 +7,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 import asyncio
-
 from dohproxy import client_protocol, utils
-
+import argparse
 
 # CLIENT_STORE['client'] is shared by all handlers.
 CLIENT_STORE = {'client': None}
@@ -33,7 +32,13 @@ def parse_args():
     parser.add_argument(
         '--ddns',
         action='store_true',
-        help='Enables D-DNS functionality',
+        help='Enables D-DNS functionality'
+    )
+    parser.add_argument(
+        '--mode',
+        type=client_protocol.DdnsMode.argtype,
+        choices=client_protocol.DdnsMode,
+        help='D-DNS Mode (roundrobin, random, CDN)'
     )
 
     return parser.parse_args()

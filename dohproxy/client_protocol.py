@@ -15,6 +15,7 @@ import struct
 import urllib.parse
 import h2.events
 import random
+from enum import Enum
 from bidict import bidict
 
 from dohproxy import constants, utils
@@ -23,12 +24,37 @@ DOHSERVERS = bidict({'dns.google': 'Google',
                      'cloudflare-dns.com': 'CF',
                      'dns.quad9.net': 'Quad9'})
 
+class ArgTypeMixin(Enum):
+
+    @classmethod
+    def argtype(cls, s: str) -> Enum:
+        try:
+            return cls[s]
+        except KeyError:
+            raise argparse.ArgumentTypeError(
+                f"{s!r} is not a valid {cls.__name__}")
+
+    def __str__(self):
+        return self.name
+
+
+class DdnsMode(ArgTypeMixin, Enum):
+    roundrobin = 0
+    random = 1
+    CDN = 2
 
 class StubServerProtocol:
 
     def __init__(self, args, logger=None, client_store=None):
         self.logger = logger
         self.args = args
+        self.rr_idx = 0
+
+        if args.mode is None:
+            self.mode = None
+        else:
+            self.mode = args.mode
+
         self._lock = asyncio.Lock()
         if logger is None:
             self.logger = utils.configure_logger('StubServerProtocol')
@@ -155,9 +181,15 @@ class StubServerProtocol:
         return self.args.uri + '?' + params_str
 
     def choose_resolver(self):
-        res = random.choice(list(self.client_store))
-        self.logger.info('CHOSE {} from {}'.format(
-            res, self.client_store.keys()))
+        if self.mode is DdnsMode.random:
+            res = random.choice(list(self.client_store))
+        elif self.mode is DdnsMode.roundrobin:
+            res = list(self.client_store)[self.rr_idx]
+            self.rr_idx = (self.rr_idx + 1) % len(self.client_store)
+        else:
+            res = list(self.client_store)[0]
+        self.logger.info('CHOSE {} from {} mode {}'.format(
+            res, self.client_store.keys(), self.mode))
         return [self.client_store[res], DOHSERVERS.inverse[res]]
 
     async def make_request(self, addr, dnsq):
@@ -260,3 +292,4 @@ class StubServerProtocolTCP(StubServerProtocol):
 
     def eof_received(self):
         self.transport.close()
+    
